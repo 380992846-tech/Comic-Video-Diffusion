@@ -7,19 +7,17 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import multiprocessing as mp
 from pathlib import Path
 
-import cv2  # noqa: F401
+import cv2
 import pandas as pd
-
-from dataset import process_video  # noqa: E402  (同目录)
+from dataset import process_video
 
 
 def _process_one(args: tuple) -> dict:
     video_path, prompt, out_dir, num_frames, resolution, crop_method = args
-    frames, ar = process_video(video_path, resolution, crop_method)
+    frames, _ = process_video(video_path, resolution, crop_method)
     if frames is None or len(frames) < 2:
         return {"video_path": video_path, "ok": False}
     # 截取/补齐到 num_frames 并写入 out_dir（近似首帧+抽样）

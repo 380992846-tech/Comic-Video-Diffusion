@@ -13,7 +13,7 @@ import csv
 import logging
 from pathlib import Path
 
-import cv2  # noqa: F401  (经 opencv-python 读取视频帧)
+import cv2
 import torch
 from torch.utils.data import Dataset
 
