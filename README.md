@@ -295,6 +295,19 @@ Metrics: **FVD · CLIP Similarity · Human preference (5-point Likert)**.
 
 ---
 
+## 骨架说明 & 运行建议（审核）
+
+> ⚠️ **当前为工程骨架**，真正训练需补 submodule 与模型：
+> - `animatediff_sft.py` / `animatediff_infer.py`：参数已就绪，但训练/推理**委托给 `models/animatediff/`（submodule）**实现；
+> - `data/dataset.py`：`process_video` 已真实读帧/裁剪，但 `__getitem__` 返回**占位张量**，需接 AnimateDiff 数据管线转 `(T,C,H,W)`；
+> - `scripts/precompute_vae.py` / `eval_fvd.py` / `test_vae_cache.py`：骨架（见 `scripts/README.md`）。
+
+**运行建议**：
+- VA 预计算（省 8-10GB 显存）**先用 `test_vae_cache.py` 验证兼容**，不兼容就回调到梯度检查点 + CPU offload；
+- 数据预处理**至少提前 48h**（多进程 `prepare_comic_dataset.py`）；
+- LoRA（~20GB 显存）散热压力小于 DiT，但长跑仍建议 `nvidia-smi -pl 250` 降功耗墙 + 温度告警（>80°C 降频）；
+- 双日志（W&B offline 保底 + 本地 TensorBoard）防网络断了丢指标。
+
 ## References
 
 - AnimateDiff (ICLR 2024) — Motion module architecture

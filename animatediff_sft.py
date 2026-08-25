@@ -25,10 +25,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--learning_rate", type=float, default=1e-4)
     p.add_argument("--lr_scheduler_type", default="cosine")
     p.add_argument("--num_train_epochs", type=int, default=1)
-    p.add_argument("--gradient_checkpointing", action="store_true")
+    p.add_argument("--gradient_checkpointing", default=True,
+                   type=lambda s: str(s).lower() in ("true", "1", "yes"))  # 兼容 sh 传 "True"
     p.add_argument("--mixed_precision", default="bf16")
     p.add_argument("--num_frames", type=int, default=16)
     p.add_argument("--resolution", type=int, default=512)
+    p.add_argument("--num_workers", type=int, default=8)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--resume", default="", help="从 checkpoint 恢复")
     p.add_argument("--report_to", nargs="+", default=["tensorboard"])
     p.add_argument("--wandb_project", default="comic_video_diffusion")
     p.add_argument("--logging_steps", type=int, default=50)

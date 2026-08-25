@@ -6,6 +6,9 @@ channels:
   - defaults
 dependencies:
   - python=3.10
+  - pytorch=2.0.1        # 固定 GPU 版，避免装成 CPU torch
+  - torchvision=0.15.2
+  - pytorch-cuda=11.8     # A800 用 CUDA 11.8+；按驱动可调 12.x
   - pip
   - pip:
       - -r requirements.txt

@@ -2,6 +2,9 @@
 
 视频数据宽高比多样（16:9 / 4:3 / 9:16），直接缩放到 512×512 会严重畸变。
 本模块用 center-crop / pad 统一为正方形，并把原始宽高比写入 metadata CSV 备查。
+
+> ⚠️ **骨架说明**：`__getitem__` 目前返回**占位张量**（`torch.zeros`），`process_video` 已真实读帧/裁剪；
+> 真正开训前需把 RGB 帧转成 `(T,C,H,W)` 张量并归一化到 `[-1,1]`，并（若用 VAE 预计算）从缓存 latents 读取。
 """
 
 from __future__ import annotations
