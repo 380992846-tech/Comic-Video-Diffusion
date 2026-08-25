@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 训练产物（不进 git）
+logs/
+outputs/
+wandb/
+paper/demo_videos/*.mp4
+
+# 模型权重 / checkpoint（大，不入库）
+models/sd_base/
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# 本地
+.DS_Store

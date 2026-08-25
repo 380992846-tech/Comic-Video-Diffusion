@@ -1,0 +1,16 @@
+torch>=2.0.1
+diffusers>=0.19.3
+transformers>=4.35.0
+accelerate>=0.25
+xformers>=0.0.20
+peft>=0.7.0
+safetensors
+opencv-python
+pandas
+numpy
+tqdm
+pillow
+wandb
+tensorboard
+omegaconf
+einops

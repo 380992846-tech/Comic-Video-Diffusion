@@ -1,0 +1,32 @@
+# AnimateDiff LoRA 微调（主配置）· 单卡 A800 推荐
+model:
+  base_model: runwayml/stable-diffusion-v1-5
+  motion_adapter: Shanghai_AI_Laboratory/animatediff-motion-adapter-v1-5-2
+
+training:
+  sft_type: lora
+  lora_rank: 32          # 质量/显存平衡；风格重任务用 64
+  lora_alpha: 64
+  batch_size: 1           # 不要调大——视频帧会乘倍显存
+  gradient_accumulation_steps: 16   # 有效 batch = 16
+  learning_rate: 1e-4     # 比全量微调高 10–20×
+  lr_scheduler: cosine
+  num_train_epochs: 1
+  gradient_checkpointing: true      # A800 单卡必须
+  mixed_precision: bf16             # A800 原生、比 fp16 稳
+  num_frames: 16
+  resolution: 512
+
+data:
+  csv_path: /path/to/video_metadata.csv
+  video_folder: /path/to/videos
+  crop_method: center               # center 处理可变宽高比（角色类视频）
+
+logging:
+  report_to: [wandb, tensorboard]   # 双备份：W&B 远程 + 本地 TensorBoard
+  logging_steps: 50
+  save_steps: 5000
+  wandb_project: comic_video_diffusion
+  wandb_run_name: lora_rank32_20k
+
+output_dir: logs/lora_experiments/run_001

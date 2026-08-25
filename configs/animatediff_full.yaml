@@ -1,0 +1,31 @@
+# AnimateDiff 全量微调（谨慎！）· 需 53GB+ 显存，约 1/4 LoRA 速度
+# 若显存/时间不允许，推荐用大 rank LoRA(rank=256) 或只微调 UNet 后 2-3 层 + motion adapter 作为代理。
+model:
+  base_model: runwayml/stable-diffusion-v1-5
+  motion_adapter: Shanghai_AI_Laboratory/animatediff-motion-adapter-v1-5-2
+
+training:
+  sft_type: full
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 5e-5          # 全量微调通常显著低于 LoRA
+  lr_scheduler: cosine
+  num_train_epochs: 1
+  gradient_checkpointing: true  # 必开
+  mixed_precision: bf16
+  num_frames: 12                # 全量建议降到 12 保显存
+  resolution: 512
+
+data:
+  csv_path: /path/to/video_metadata.csv
+  video_folder: /path/to/videos
+  crop_method: center
+
+logging:
+  report_to: [wandb, tensorboard]
+  logging_steps: 50
+  save_steps: 5000
+  wandb_project: comic_video_diffusion
+  wandb_run_name: full_ft_5k
+
+output_dir: logs/full_finetune/run_001

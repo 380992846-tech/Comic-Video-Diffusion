@@ -1,0 +1,20 @@
+# 数据集配置
+data:
+  num_frames: 16
+  resolution: 512
+  crop_method: center          # center(角色类) / pad(保全构图)
+  save_format: frames
+  precompute_vae: true         # 训练省 8-10GB 显存（先测兼容）
+
+# 增强（防过拟合：5000 条视频下 LoRA 易过拟合）
+augmentation:
+  random_flip: true            # 水平翻转，等效样本翻倍
+  random_resize: true          # 随机裁剪/缩放，增加尺度变化
+  color_jitter: 0.1
+  frame_skip: true             # 随机采样不同起始帧
+
+# WebVid 公共数据集（可选）
+webvid:
+  dataset: WebVid-10M
+  split: validation
+  max_clips: 10000
