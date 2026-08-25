@@ -19,3 +19,4 @@ models/sd_base/
 
 # 本地
 .DS_Store
+temporal_sat_*.png

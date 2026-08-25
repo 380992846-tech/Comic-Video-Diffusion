@@ -1,0 +1,3 @@
+[submodule "models/animatediff"]
+	path = models/animatediff
+	url = https://github.com/guoyww/AnimateDiff.git

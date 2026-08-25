@@ -316,3 +316,14 @@ Metrics: **FVD Â· CLIP Similarity Â· Human preference (5-point Likert)**.
 - Diffusers LoRA Training â€” Official reference
 
 **License**: Apache 2.0
+
+---
+
+## DAC temporal attention (motion module)
+
+`models/dac_motion_module.py` provides a **self-contained DAC temporal attention** (`DACTemporalAttention`)
+for the AnimateDiff motion module: learnable per-head temperature, fixed-target concentration loss, and
+vectorised inference-time skipping of near-uniform temporal heads. It reuses the exact insertion point ¡ª the
+frame-axis self-attention inside `VersatileAttention` ¡ª and `analyze_temporal_saturation` produces the
+per-head concentration `C(A_h)` profile / figure. The **real** temporal-saturation figure requires a trained
+AnimateDiff model + a video on A800.
