@@ -1,3 +1,12 @@
 [submodule "models/animatediff"]
 	path = models/animatediff
 	url = https://github.com/guoyww/AnimateDiff.git
+	branch = main
+	shallow = true
+	ignore = dirty
+
+[submodule "models/motion-adapter"]
+	path = models/motion-adapter
+	url = https://github.com/guoyww/animatediff-motion-adapter.git
+	branch = main
+	shallow = true
