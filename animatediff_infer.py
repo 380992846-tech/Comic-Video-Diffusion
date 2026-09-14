@@ -186,9 +186,28 @@ def apply_checkpoint(motion_unet, ckpt_path: Path, args: argparse.Namespace,
     targets = tuple(meta.get("lora_targets") or DEFAULT_LORA_TARGETS)
     use_dac = bool(meta.get("use_dac", False))
 
+    # meta 可能不准（例如 trainer 把 sft_type 默认值也写进了 meta）。真正可靠的依据是
+    # checkpoint 里的键名：LoRA 训练会存 *.lora_A.weight，全参数/部分解冻训练存的是原始
+    # 权重名（...attn1.to_q.weight）。两者注入方式互斥，判错就必然大量键不匹配。
+    from safetensors.torch import load_file as _load_st
+    raw_keys = list(_load_st(str(load_path)).keys()) if load_path.suffix == ".safetensors" else []
+    has_lora_keys = any(k.endswith(".lora_A.weight") for k in raw_keys)
+    has_raw_attn_keys = any(k.endswith(".attn1.to_q.weight") for k in raw_keys)
+    if has_lora_keys and not has_raw_attn_keys:
+        detected = "lora"
+    elif has_raw_attn_keys and not has_lora_keys:
+        detected = "partial" if mode in ("lora", "partial") else "motion"
+        if mode == "lora":
+            print(f"[ckpt] meta.mode=lora 但 checkpoint 里是全参数权重 -> 按 {detected} 处理")
+    else:
+        detected = mode
+    if detected != mode and not (detected == "partial" and mode == "partial"):
+        print(f"[ckpt] mode 由 meta 的 {mode!r} 修正为按键名判定的 {detected!r}")
+    mode = detected
+
     print(f"[ckpt] {ckpt_path}")
     print(f"[ckpt] meta: mode={mode} rank={rank} alpha={alpha} use_dac={use_dac} "
-          f"step={meta.get('step')} run={meta.get('run_name')}")
+          f"step={meta.get('step')} run={meta.get('run_name')} keys={len(raw_keys)}")
 
     # DAC 必须先包：wrap_motion_attention 需要 attn1.to_q 是原始 nn.Linear
     # （要读 out_features 推 dim_head）；若先注入 LoRA，to_q 会变成 LoRALinear
