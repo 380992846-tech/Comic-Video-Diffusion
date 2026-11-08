@@ -131,9 +131,67 @@ def _loadable_path(path: Path) -> Path:
 
 
 def peek_meta(path: Path) -> dict:
-    """只读 meta，用来决定注入 LoRA / DAC 的超参（必须先于 load_checkpoint）。"""
-    blob = torch.load(path, map_location="cpu", weights_only=True)
-    return dict(blob.get("meta", {}) or {})
+    """读 checkpoint 的 meta，用来决定注入 LoRA / DAC 的超参。
+
+    三条路径都要试，因为实测踩过坑：``models/lora.save_checkpoint`` 现在写的是**真正的
+    safetensors**（meta 存在文件头），而 ``torch.load`` 读 safetensors 会直接返回
+    张量字典、``.get("meta")`` 恒为空 —— 于是 rank/use_dac 全部悄悄回退成默认值
+    （32 / False），导致 e2_rank8/16/64、e1_motion_full、e4_dac_r32 五个臂的出片全部失败。
+    所以：先读 safetensors 文件头 → 再读同名 .json sidecar → 最后才退回 torch pickle。
+    """
+    import json as _json
+
+    if path.suffix == ".safetensors":
+        try:
+            from safetensors import safe_open
+            with safe_open(str(path), framework="pt") as fh:
+                raw = (fh.metadata() or {}).get("meta")
+            if raw:
+                return dict(_json.loads(raw))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ckpt] safetensors 头读取失败: {type(exc).__name__}: {exc}")
+        side = path.with_suffix(".json")
+        if side.exists():
+            try:
+                return dict(_json.loads(side.read_text(encoding="utf-8")))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ckpt] sidecar 读取失败: {type(exc).__name__}: {exc}")
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=True)
+        if isinstance(blob, dict):
+            return dict(blob.get("meta", {}) or {})
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ckpt] meta 读取失败: {type(exc).__name__}: {exc}")
+    return {}
+
+
+def infer_from_keys(ckpt_path: Path, meta: dict) -> dict:
+    """不信任 meta，直接从权重键名/形状推断 mode / rank / use_dac。
+
+    这是最可靠的一层：LoRA 训练存 ``*.lora_A.weight``（rank 就是它的第 0 维），
+    全参/部分解冻存原始权重名，DAC 会额外存 ``*.log_tau``。
+    """
+    from safetensors.torch import load_file as _load_st
+
+    if ckpt_path.suffix != ".safetensors":
+        return {"mode": None, "rank": None, "use_dac": None, "n_keys": 0}
+    try:
+        sd = _load_st(str(ckpt_path))
+    except Exception:  # noqa: BLE001
+        return {"mode": None, "rank": None, "use_dac": None, "n_keys": 0}
+
+    keys = list(sd.keys())
+    lora_keys = [k for k in keys if k.endswith(".lora_A.weight")]
+    raw_attn = [k for k in keys if k.endswith(".attn1.to_q.weight")]
+    dac_keys = [k for k in keys if k.endswith(".log_tau")]
+    rank = int(sd[lora_keys[0]].shape[0]) if lora_keys else None
+    if lora_keys and not raw_attn:
+        mode = "lora"
+    elif raw_attn and not lora_keys:
+        mode = "partial"
+    else:
+        mode = None
+    return {"mode": mode, "rank": rank, "use_dac": bool(dac_keys), "n_keys": len(keys)}
 
 
 def build_pipeline(args: argparse.Namespace, device: torch.device, dtype: torch.dtype):
@@ -180,34 +238,24 @@ def apply_checkpoint(motion_unet, ckpt_path: Path, args: argparse.Namespace,
     """把 checkpoint 灌回 motion UNet，并返回/打印完整的匹配统计。"""
     load_path = _loadable_path(ckpt_path)
     meta = peek_meta(load_path)
-    mode = meta.get("mode") or meta.get("train_mode") or meta.get("sft_type") or "lora"
-    rank = int(meta.get("lora_rank") or 32)
-    alpha = int(meta.get("lora_alpha") or 64)
-    targets = tuple(meta.get("lora_targets") or DEFAULT_LORA_TARGETS)
-    use_dac = bool(meta.get("use_dac", False))
-
-    # meta 可能不准（例如 trainer 把 sft_type 默认值也写进了 meta）。真正可靠的依据是
-    # checkpoint 里的键名：LoRA 训练会存 *.lora_A.weight，全参数/部分解冻训练存的是原始
-    # 权重名（...attn1.to_q.weight）。两者注入方式互斥，判错就必然大量键不匹配。
-    from safetensors.torch import load_file as _load_st
-    raw_keys = list(_load_st(str(load_path)).keys()) if load_path.suffix == ".safetensors" else []
-    has_lora_keys = any(k.endswith(".lora_A.weight") for k in raw_keys)
-    has_raw_attn_keys = any(k.endswith(".attn1.to_q.weight") for k in raw_keys)
-    if has_lora_keys and not has_raw_attn_keys:
-        detected = "lora"
-    elif has_raw_attn_keys and not has_lora_keys:
-        detected = "partial" if mode in ("lora", "partial") else "motion"
-        if mode == "lora":
-            print(f"[ckpt] meta.mode=lora 但 checkpoint 里是全参数权重 -> 按 {detected} 处理")
+    probe = infer_from_keys(ckpt_path, meta)
+    mode = probe["mode"] or meta.get("mode") or meta.get("train_mode") or meta.get("sft_type") or "lora"
+    rank = int(probe["rank"] or meta.get("lora_rank") or 32)
+    alpha = int(meta.get("lora_alpha") or (2 * rank))
+    # meta["lora_targets"] 可能是字符串（trainer 里 vars(args) 覆盖了 ckpt_info 的 list），
+    # 直接 tuple(str) 会得到逐字符元组 -> 只注入到 42 个模块、252 个键不匹配。
+    raw_targets = meta.get("lora_targets") or DEFAULT_LORA_TARGETS
+    if isinstance(raw_targets, str):
+        targets = tuple(t.strip() for t in raw_targets.split(",") if t.strip())
     else:
-        detected = mode
-    if detected != mode and not (detected == "partial" and mode == "partial"):
-        print(f"[ckpt] mode 由 meta 的 {mode!r} 修正为按键名判定的 {detected!r}")
-    mode = detected
+        targets = tuple(raw_targets)
+    use_dac = bool(probe["use_dac"]) if probe["use_dac"] is not None else bool(meta.get("use_dac", False))
 
     print(f"[ckpt] {ckpt_path}")
+    print(f"[ckpt] key-probe: mode={probe['mode']} rank={probe['rank']} "
+          f"use_dac={probe['use_dac']} keys={probe['n_keys']}")
     print(f"[ckpt] meta: mode={mode} rank={rank} alpha={alpha} use_dac={use_dac} "
-          f"step={meta.get('step')} run={meta.get('run_name')} keys={len(raw_keys)}")
+          f"step={meta.get('step')} run={meta.get('run_name')}")
 
     # DAC 必须先包：wrap_motion_attention 需要 attn1.to_q 是原始 nn.Linear
     # （要读 out_features 推 dim_head）；若先注入 LoRA，to_q 会变成 LoRALinear

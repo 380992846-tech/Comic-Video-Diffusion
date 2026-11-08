@@ -1,0 +1,40 @@
+# AnimateDiff LoRA 微调 · RTX 5090（32GB / sm_120）配置
+#
+# 与旧配置的差别（针对"出片抽象"的三个诱因）：
+#   1. resolution 384 → 512（AnimateDiff 原生分辨率，384 会掉构图和细节）
+#   2. rank 32 → 16（等预算下 r8/r16 的尾部 loss 更好、显存更省；先小后大）
+#   3. 400 步 → 2000 步，并且每 200 步存一次 checkpoint + 记 val loss，方便取最优而不是取最后一个
+model:
+  base_model: /root/autodl-tmp/models/sd15
+  motion_adapter: /root/autodl-tmp/models/adapter-v15-2
+
+training:
+  sft_type: lora
+  lora_rank: 16
+  lora_alpha: 32
+  batch_size: 1
+  gradient_accumulation_steps: 4     # 有效 batch = 4，和旧实验同口径
+  learning_rate: 1e-4
+  lr_scheduler: cosine
+  warmup_steps: 50
+  gradient_checkpointing: true
+  mixed_precision: bf16
+  num_frames: 16
+  resolution: 512
+  random_flip: true
+  color_jitter: 0.1
+
+data:
+  csv_path: /root/autodl-tmp/data/anime_clips/video_metadata.csv
+  video_folder: /root/autodl-tmp/data/anime_clips_all
+  crop_method: center
+
+logging:
+  report_to: [tensorboard]
+  logging_steps: 20
+  save_steps: 200
+  val_loss_every: 200                # 每 200 步跑一次确定性 val loss（scripts/eval_val_loss.py）
+  keep_last_n: 5
+
+output_dir: /root/autodl-tmp/runs/lora_r16_512_2000
+steps: 2000

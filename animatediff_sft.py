@@ -43,8 +43,10 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from data.dataset import ComicVideoDataset  # noqa: E402
+from models.consistency import color_stats_loss, edge_consistency_loss, predict_x0  # noqa: E402
 from models.dac_attention import collect_dac_losses, dac_head_statistics, wrap_motion_attention  # noqa: E402
 from models.lora import inject_lora, save_checkpoint  # noqa: E402
+from models.ref_tokens import RefTokenEncoder, add_ref_tokens  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("animatediff_sft")
@@ -79,6 +81,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dac_tau_threshold", type=float, default=2.0)
     p.add_argument("--dac_mu", type=float, default=0.5)
     p.add_argument("--dac_lambda_init", type=float, default=0.1)
+
+    # Anchor-LoRA（正结果方向）：参考帧 token + 线稿/颜色一致性损失
+    p.add_argument("--use_ref_tokens", action="store_true",
+                   help="把片段首帧编码成 cross-attention token 拼到文本 embedding 后面")
+    p.add_argument("--ref_token_count", type=int, default=4)
+    p.add_argument("--lambda_edge", type=float, default=0.0, help="线稿一致性损失权重（0=关）")
+    p.add_argument("--lambda_color", type=float, default=0.0, help="颜色一致性损失权重（0=关）")
 
     # 数据
     p.add_argument("--num_frames", type=int, default=16)
@@ -291,6 +300,20 @@ def main() -> int:
                         persistent_workers=args.num_workers > 0)
 
     params = [p for p in motion_unet.parameters() if p.requires_grad]
+
+    # Anchor-LoRA：参考帧 token 编码器（零初始化，训练开始时等价于原模型）
+    ref_encoder = None
+    if args.use_ref_tokens:
+        ref_encoder = RefTokenEncoder(
+            in_channels=getattr(vae.config, "latent_channels", 4),
+            num_tokens=args.ref_token_count,
+            out_dim=getattr(text_encoder.config, "hidden_size", 768),
+        ).to(device=device, dtype=dtype)
+        ref_encoder.train()
+        params = params + list(ref_encoder.parameters())
+        logger.info("Anchor-LoRA: ref tokens=%d, encoder params=%.2fM",
+                    args.ref_token_count, sum(p.numel() for p in ref_encoder.parameters()) / 1e6)
+
     if not params:
         raise RuntimeError(
             f"train_mode={ckpt_info.get('mode')} produced 0 trainable parameters; "
@@ -348,6 +371,11 @@ def main() -> int:
                     lat = lat.reshape(bsz, frames, *lat.shape[1:]).permute(0, 2, 1, 3, 4).contiguous()
                 emb = encode_prompts(tokenizer, text_encoder, prompts, device, dtype)
                 emb = emb.repeat_interleave(frames, dim=0)
+                ref_x0 = lat[:, :, :1] if lat.dim() == 5 else lat.unsqueeze(2)
+                if ref_encoder is not None:
+                    # 参考帧（首帧）→ K 个 cross-attention token，拼在文本 embedding 后面
+                    tokens = ref_encoder(lat[:, :, 0].to(dtype))
+                    emb = add_ref_tokens(emb, tokens, frames)
 
             noise = torch.randn_like(lat)
             timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps,
@@ -375,6 +403,15 @@ def main() -> int:
                     conc_loss = collect_dac_losses(motion_unet)
                     if conc_loss is not None:
                         loss = loss + args.dac_loss_weight * conc_loss
+                edge_loss = color_loss = None
+                if args.lambda_edge > 0 or args.lambda_color > 0:
+                    x0_hat = predict_x0(noise_scheduler, noisy, pred, timesteps)
+                    if args.lambda_edge > 0:
+                        edge_loss = edge_consistency_loss(x0_hat, ref_x0)
+                        loss = loss + args.lambda_edge * edge_loss
+                    if args.lambda_color > 0:
+                        color_loss = color_stats_loss(x0_hat, ref_x0)
+                        loss = loss + args.lambda_color * color_loss
 
             scaled = loss / accum
             if args.mixed_precision == "fp16":
@@ -431,7 +468,9 @@ def main() -> int:
                 if args.save_steps > 0 and global_step % args.save_steps == 0:
                     save_checkpoint(out_dir / "checkpoints" / f"iter-{global_step}.safetensors",
                                     motion_unet,
-                                    {**ckpt_info, **vars(args), "step": global_step, "run_name": run_name})
+                                    {**vars(args), **ckpt_info,
+                                     "lora_targets": list(ckpt_info.get("lora_targets") or []),
+                                     "step": global_step, "run_name": run_name})
                     logger.info("saved checkpoint at step %d", global_step)
 
                 if global_step >= total_steps:
@@ -441,7 +480,9 @@ def main() -> int:
             break
 
     save_checkpoint(out_dir / "checkpoints" / "final.safetensors", motion_unet,
-                    {**ckpt_info, **vars(args), "step": global_step, "run_name": run_name})
+                    {**vars(args), **ckpt_info,
+                     "lora_targets": list(ckpt_info.get("lora_targets") or []),
+                     "step": global_step, "run_name": run_name})
     metrics.close()
     if tb_writer:
         tb_writer.close()

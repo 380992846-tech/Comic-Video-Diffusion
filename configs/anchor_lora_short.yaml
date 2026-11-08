@@ -1,0 +1,45 @@
+# Anchor-LoRA 短预算实验（A800 80GB，总时长 3–4 小时）
+#
+# 目标：证明「参考帧 token + 线稿/颜色一致性损失」在**同等算力**下比纯 LoRA 更好，
+# 且不牺牲运动多样性。所有臂共用同一份数据、同一随机种子、同一评测脚本。
+#
+# 用法：
+#   python animatediff_sft.py --csv_path ... --video_folder ... --output_dir runs/A_baseline \
+#       --sft_type lora --lora_rank 8 --resolution 384 --num_frames 12 \
+#       --max_train_steps 600 --gradient_accumulation_steps 4
+#
+model:
+  base_model: /root/autodl-tmp/models/sd15
+  motion_adapter: /root/autodl-tmp/models/adapter-v15-2
+
+training:
+  sft_type: lora
+  lora_rank: 8
+  lora_alpha: 16
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 1e-4
+  lr_scheduler: cosine
+  warmup_steps: 20
+  gradient_checkpointing: true
+  mixed_precision: bf16
+  num_frames: 12
+  resolution: 384
+  max_train_steps: 600
+  save_steps: 200
+  logging_steps: 20
+
+# Anchor-LoRA 组件（关闭即等价于基线 LoRA）
+anchor:
+  use_ref_tokens: true   # A 臂关，B/E 臂开
+  ref_token_count: 4
+  lambda_edge: 0.05      # C 臂 0.05，F 臂扫 0.01/0.1
+  lambda_color: 0.02     # D 臂 0.02
+
+data:
+  csv_path: /root/autodl-tmp/data/index/video_metadata.csv
+  video_folder: /root/autodl-tmp/data/clips
+  crop_method: center
+  random_flip: true
+
+output_dir: /root/autodl-tmp/runs/A_baseline
