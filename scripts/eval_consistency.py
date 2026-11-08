@@ -128,7 +128,9 @@ def main() -> int:
         edge_ref = sobel(gray_ref)
         edge_ssims = [ssim(sobel(g), edge_ref) for g in gray_frames[:: max(1, len(gray_frames) // 6)]]
         motion = float(np.abs(np.diff(gray_frames, axis=0)).mean()) if len(gray_frames) > 1 else 0.0
-        hsv = float(np.linalg.norm(hsv_stats(frames[0]) - hsv_stats(ref)))
+        # 颜色：拿「后续帧的平均统计」对参考帧比 —— 只比 frames[0] 会恒等于 0（自己比自己）
+        later = frames[1:] if len(frames) > 1 else frames
+        hsv = float(np.linalg.norm(hsv_stats(np.concatenate([f[None] for f in later]).mean(axis=0)) - hsv_stats(ref)))
 
         results.append({
             "video": str(vid), "frames": int(len(frames)), "ref_source": ref_source,
