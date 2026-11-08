@@ -97,6 +97,30 @@ def resolve_checkpoint(ckpt: str | None) -> Path | None:
     raise FileNotFoundError(f"--ckpt_dir 找不到可用的 checkpoint: {ckpt}")
 
 
+def _is_real_safetensors(path: Path) -> bool:
+    """按文件头判断是不是真正的 safetensors（而不是「叫 .safetensors 的 torch.save 包」）。
+
+    torch 2.6+ 的 ``torch.load(..., weights_only=True)`` 默认不认识 safetensors 格式，
+    会在 pickle 路径上报 ``Unsupported operand 64``；所以**不能**用 torch.load 来试读。
+    这里直接解析 safetensors 头：8 字节小端长度 + 该长度的 JSON。
+    """
+    import json
+    import struct
+
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+            if len(head) < 8:
+                return False
+            n = struct.unpack("<Q", head)[0]
+            if n <= 0 or n > 100 * 1024 * 1024 or n > path.stat().st_size - 8:
+                return False
+            json.loads(fh.read(n))
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _loadable_path(path: Path) -> Path:
     """绕开「名字叫 .safetensors、内容是 torch.save 包」的问题。
 
@@ -111,6 +135,10 @@ def _loadable_path(path: Path) -> Path:
     """
     import os
     import shutil
+
+    # 真正的 safetensors：直接返回，交给下游 safetensors 加载器（不要用 torch.load 试读）
+    if path.suffix == ".safetensors" and _is_real_safetensors(path):
+        return path
 
     try:
         torch.load(path, map_location="cpu", weights_only=True)
